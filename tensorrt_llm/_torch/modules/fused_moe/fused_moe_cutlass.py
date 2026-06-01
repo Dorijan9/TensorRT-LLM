@@ -515,6 +515,26 @@ class CutlassFusedMoE(MoE):
         return True
 
     def _get_quant_method(self):
+        # V7: opt-in on-the-fly W8A16 with MSE-optimal per-channel scale
+        # search. Same in-memory layout as INT8WoqPerChannelFusedMoEMethod;
+        # the difference is that scales are computed from BF16 weights at
+        # load time via a per-channel grid search across clipping percentiles
+        # that minimises the L2 reconstruction error per channel.
+        try:
+            import os
+            if os.environ.get(
+                    "TRTLLM_MOE_W8A16_ONTHEFLY", "0").lower() in (
+                        "1", "true", "yes", "on"):
+                from .quantization import (  # noqa: WPS433
+                    INT8WoqPerChannelOnTheFlyMSEFusedMoEMethod, )
+                if (self.quant_config is None
+                        or not self.quant_config.layer_quant_mode.has_any_quant(
+                            exclude_kv_cache=True)) and self.dtype in (
+                                torch.bfloat16, torch.float16):
+                    return INT8WoqPerChannelOnTheFlyMSEFusedMoEMethod()
+        except Exception:  # pragma: no cover
+            pass
+
         if self.quant_config is not None and self.quant_config.layer_quant_mode.has_any_quant(
                 exclude_kv_cache=True):
             if self.quant_config.layer_quant_mode.has_fp8_qdq():
