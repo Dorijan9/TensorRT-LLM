@@ -515,6 +515,24 @@ class CutlassFusedMoE(MoE):
         return True
 
     def _get_quant_method(self):
+        # On-the-fly W8A16: when TRTLLM_MOE_W8A16_ONTHEFLY=1 and the
+        # checkpoint is unquantized (BF16/FP16), quantize routed expert
+        # weights to INT8 at load time and dispatch to the standard
+        # INT8 weight-only kernel. ABI-safe, Python-only.
+        from .w8a16_on_the_fly import (OnTheFlyINT8WoqPerChannelFusedMoEMethod,
+                                       w8a16_on_the_fly_enabled)
+
+        unquantized_config = (self.quant_config is None
+                              or not self.quant_config.layer_quant_mode
+                              .has_any_quant(exclude_kv_cache=True))
+        if w8a16_on_the_fly_enabled() and unquantized_config:
+            logger.info_once(
+                "CutlassFusedMoE: TRTLLM_MOE_W8A16_ONTHEFLY=1 active; "
+                "quantizing routed MoE expert weights to INT8 at load time",
+                key="w8a16_onthefly_active",
+            )
+            return OnTheFlyINT8WoqPerChannelFusedMoEMethod()
+
         if self.quant_config is not None and self.quant_config.layer_quant_mode.has_any_quant(
                 exclude_kv_cache=True):
             if self.quant_config.layer_quant_mode.has_fp8_qdq():
